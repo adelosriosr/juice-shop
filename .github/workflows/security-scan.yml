@@ -1,4 +1,4 @@
-name: CI Pipeline
+name: Pipeline DevSecOps
 
 on:
   push:
@@ -6,13 +6,88 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
 jobs:
-  build-test:
+  secret_scanning:
+    name: Secret Scanning
     runs-on: ubuntu-latest
     steps:
-      - name: Descargar código
+      - name: Checkout completo
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks
+        id: gitleaks
+        uses: gitleaks/gitleaks-action@v3
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  dependency_and_code_scans:
+    name: SCA / SAST
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Instalar dependencias
-        run: npm install
-      - name: Ejecutar tests
-        run: npm test
+        run: npm ci
+
+      # ------------------------------------------------------------
+      # npm audit (sin GitHub Action dedicada)
+      # ------------------------------------------------------------
+      - name: npm audit
+        run: |
+          npm audit --json --audit-level=high > npm-audit.json || true
+
+      # -----------------------------------------------------------------------
+      # Semgrep por bash usando contenedor oficial (evitando wrapper deprecated)
+      # -----------------------------------------------------------------------
+      - name: Semgrep
+        run: |
+          docker run --rm \
+            -v "$PWD:/src" \
+            -w /src \
+            semgrep/semgrep \
+            semgrep scan \
+            --config p/default \
+            --sarif \
+            --output semgrep.sarif \
+            --error || true
+
+      # ----------------------------------------------------------------
+      # 5) OWASP Dependency-Check Action
+      # ----------------------------------------------------------------
+      - name: OWASP Dependency-Check
+        id: depcheck
+        uses: dependency-check/Dependency-Check_Action@main
+        continue-on-error: true
+        with:
+          project: "juice-shop"
+          path: "."
+          format: "HTML"
+          out: "reports"
+          args: >
+            --enableRetired
+            --failOnCVSS 8
+
+      - name: Subir evidencias del job de SCA
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sca-sast-reportes
+          path: |
+            npm-audit.json
+            reports
+
+      - name: Subir resultados Semgrep a GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
