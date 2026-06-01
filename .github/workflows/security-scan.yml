@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Instalar dependencias
-        run: npm ci
+        run: npm install
 
       # ------------------------------------------------------------
       # npm audit (sin GitHub Action dedicada)
@@ -78,7 +78,7 @@ jobs:
 
       - name: Subir evidencias del job de SCA
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: sca-sast-reportes
           path: |
